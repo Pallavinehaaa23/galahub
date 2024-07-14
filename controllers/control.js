@@ -1,4 +1,5 @@
 const VenueOwner = require("../models/Venueowner");
+const Bookingmodel=require("../models/Bookingmodel")
 const User=require("../models/User")
 const bcrypt=require("bcrypt")
 const allVenue = async (req, res) => {
@@ -143,9 +144,100 @@ const addVenue = async (req, res) => {
       console.error('Error in addVenue:', error);
       res.status(500).json({ error: 'Server error' });
   }
+}
+  const LoginOwner=async(req,res)=>{
+    try{
+    const { email, password } = req.body;
+
+        // Find the owner by email
+        const owner = await VenueOwner.findOne({ 'owner.email': email });
+        if (!owner) {
+            return res.status(400).send({ error: 'Invalid login credentials' });
+        }
+
+        // Compare the provided password with the hashed password
+        const isMatch = await bcrypt.compare(password, owner.owner.password);
+        if (!isMatch) {
+            return res.status(400).send({ error: 'Invalid login credentials' });
+        }
+
+        // Generate a JWT token
+        const token = await owner.generateAuthToken();
+
+        res.send({ owner, token });
+    } catch (error) {
+        res.status(500).send({ error: 'Login failed' });
+    }
+  }
+  
+  const Bookven = async (req, res) => {
+    try {
+      const {
+        venueId,
+        userId,
+        venueName,
+        fromDate,
+        toDate,
+        totalAmount,
+        totalDays,
+      } = req.body;
+  
+      // Create a new booking instance
+      const newBooking = new Bookingmodel({
+        venueId,
+        userId,
+        venueName,
+        fromDate,
+        toDate,
+        totalAmount,
+        totalDays,
+        transactionId: "1234", // This should be generated dynamically
+        status: 'booked', // Assuming the default status is 'booked'
+      });
+  
+      // Save the booking to the database
+      await newBooking.save();
+  
+      // Find the venue owner and update their current bookings
+      const vens = await VenueOwner.findOne({ _id: venueId });
+  
+      if (!vens) {
+        return res.status(404).json({ error: 'Venue owner not found' });
+      }
+  
+      console.log('Before update:', vens.venue.currbookings);
+  
+      if (!vens.venue.currbookings) {
+        vens.venue.currbookings = []; // Initialize currbookings if it doesn't exist
+      }
+  
+      vens.venue.currbookings.push({ bookingId: newBooking._id, fromDate: fromDate, toDate: toDate });
+  
+      // Save the updated venue owner document
+      await vens.save();
+  
+      console.log('After update:', vens.venue.currbookings);
+  
+      // Respond with success message
+      res.status(201).json({ message: 'Booking successful!', booking: newBooking });
+    } catch (error) {
+      console.error('Error booking venue:', error);
+      res.status(500).json({ error: 'Failed to book the venue. Please try again.' });
+    }
+  };
+  
+const GetUserDetails = async (req, res) => {
+  try {
+    const { userId } = req.body;
+    const user = await User.findById(userId); // Adjust according to your schema and database structure
+    if (!user) {
+      return res.status(404).json({ error: 'User not found' });
+    }
+    res.json({ email: user.email, phone: user.phone });
+  } catch (error) {
+    console.error('Error fetching user details:', error);
+    res.status(500).json({ error: 'Server error' });
+  }
 };
 
-
-
-
-module.exports = { allVenue, Ownerdet, GetVen ,NewUser,LoginUser,addVenue};
+module.exports = { allVenue, Ownerdet, GetVen ,NewUser,LoginUser,addVenue,LoginOwner,Bookven,GetUserDetails};

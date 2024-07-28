@@ -1,7 +1,9 @@
 const VenueOwner = require("../models/Venueowner");
 const Bookingmodel=require("../models/Bookingmodel")
+const {v4:uuidv4}=require('uuid');
+const stripe=require('stripe')('sk_test_51PcSuOIIDFJzML4tJbfL6GOVMYSuagU4KYBZKEf3joygAzuoRevO9R2Mp92Zw4BiCHzzZswTFqEoQXuGWoDk9srQ00Xq4c48FD')
 const User=require("../models/User")
-const bcrypt=require("bcrypt")
+const bcrypt=require("bcryptjs")
 const allVenue = async (req, res) => {
   try {
     const venues = await VenueOwner.find({}); // Fetch all documents from VenueOwner collection
@@ -171,60 +173,79 @@ const addVenue = async (req, res) => {
   }
   
   const Bookven = async (req, res) => {
-    try {
-      const {
-        venueId,
-        userId,
-        venueName,
-        fromDate,
-        toDate,
-        totalAmount,
-        totalDays,
-      } = req.body;
+    const {
+      venueId,
+      userId,
+      venueName,
+      fromDate,
+      toDate,
+      totalAmount,
+      totalDays,
+      token
+    } = req.body;
   
-      // Create a new booking instance
-      const newBooking = new Bookingmodel({
-        venueId,
-        userId,
-        venueName,
-        fromDate,
-        toDate,
-        totalAmount,
-        totalDays,
-        transactionId: "1234", // This should be generated dynamically
-        status: 'booked', // Assuming the default status is 'booked'
+    try {
+      const customer = await stripe.customers.create({
+        email: token.email,
+        source: token.id
       });
   
-      // Save the booking to the database
-      await newBooking.save();
+      const payment = await stripe.charges.create(
+        {
+          amount: totalAmount * 100,
+          customer: customer.id,
+          currency: 'inr',
+          receipt_email: token.email
+        },
+        {
+          idempotencyKey: uuidv4()
+        }
+      );
   
-      // Find the venue owner and update their current bookings
-      const vens = await VenueOwner.findOne({ _id: venueId });
+      if (payment) {
+        // Create a new booking instance
+        const newBooking = new Bookingmodel({
+          venueId,
+          userId,
+          venueName,
+          fromDate,
+          toDate,
+          totalAmount,
+          totalDays,
+          transactionId: payment.id, // Use the actual payment ID from Stripe
+          status: 'booked', // Assuming the default status is 'booked'
+        });
   
-      if (!vens) {
-        return res.status(404).json({ error: 'Venue owner not found' });
+        // Save the booking to the database
+        await newBooking.save();
+  
+        // Find the venue owner and update their current bookings
+        const vens = await VenueOwner.findOne({ _id: venueId });
+  
+        if (!vens) {
+          return res.status(404).json({ error: 'Venue owner not found' });
+        }
+  
+        if (!vens.venue.currbookings) {
+          vens.venue.currbookings = []; // Initialize currbookings if it doesn't exist
+        }
+  
+        vens.venue.currbookings.push({ bookingId: newBooking._id, fromDate: fromDate, toDate: toDate });
+  
+        // Save the updated venue owner document
+        await vens.save();
+  
+        // Respond with success message
+        return res.status(201).json({ message: 'Booking successful!', booking: newBooking });
+      } else {
+        return res.status(400).json({ error: 'Payment failed' });
       }
-  
-      console.log('Before update:', vens.venue.currbookings);
-  
-      if (!vens.venue.currbookings) {
-        vens.venue.currbookings = []; // Initialize currbookings if it doesn't exist
-      }
-  
-      vens.venue.currbookings.push({ bookingId: newBooking._id, fromDate: fromDate, toDate: toDate });
-  
-      // Save the updated venue owner document
-      await vens.save();
-  
-      console.log('After update:', vens.venue.currbookings);
-  
-      // Respond with success message
-      res.status(201).json({ message: 'Booking successful!', booking: newBooking });
     } catch (error) {
-      console.error('Error booking venue:', error);
-      res.status(500).json({ error: 'Failed to book the venue. Please try again.' });
+      console.error('Error in Bookven:', error);
+      return res.status(500).json({ error: 'Server error' });
     }
   };
+  
   
 const GetUserDetails = async (req, res) => {
   try {
